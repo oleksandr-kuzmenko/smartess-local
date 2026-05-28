@@ -1,0 +1,53 @@
+[project]
+name = "smartess-local"
+version = "0.0.1"
+description = "Local-network client for hybrid inverters with Eybond/SmartESS WiFi dongles"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{name = "Oleksandr Kuzmenko", email = "alx.kuzm@gmail.com"}]
+license = {text = "MIT"}
+keywords = ["inverter", "modbus", "home-assistant", "eybond", "smartess", "voltronic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Home Automation",
+    "Topic :: System :: Hardware",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/oleksandr-kuzmenko/smartess-local"
+Repository = "https://github.com/oleksandr-kuzmenko/smartess-local"
+Issues = "https://github.com/oleksandr-kuzmenko/smartess-local/issues"
+Changelog = "https://github.com/oleksandr-kuzmenko/smartess-local/releases"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["smartess_local"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PERF", "PIE"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
