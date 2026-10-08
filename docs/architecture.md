@@ -35,5 +35,6 @@ listen, not connect. Byte-level frame details: [`protocol.md`](protocol.md).
 ## Limitations
 
 - Read-only; write operations are not implemented.
-- No auto-reconnect: a dongle drop raises `InverterError`, and the caller
-  restarts the context manager.
+- The library does not auto-reconnect; the caller must restart the context
+  manager after a connection error. The CLI `--stream` mode does this with a
+  fresh client after 10 seconds.

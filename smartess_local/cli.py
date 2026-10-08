@@ -25,6 +25,7 @@ from smartess_local.inverter import Inverter, InverterError
 from smartess_local.state import InverterState
 
 _JSON_INDENT = 2
+_RETRY_DELAY = 10.0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,30 +75,40 @@ def _state_to_jsonable(state: InverterState) -> dict[str, Any]:
 
 async def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-
-    inverter = Inverter(
-        inverter_ip=args.inverter_ip,
-        local_ip=args.local_ip,
-        local_port=args.local_port,
-        timeout=args.timeout,
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
-    try:
-        if args.probe:
-            # Probe only does UDP — no TCP listener, no dial-back. This works
-            # even when the dongle's subnet can't route back to --local-ip.
-            dev_code = await inverter.probe()
-            print(json.dumps({"dev_code": dev_code}, indent=_JSON_INDENT))
-            return 0
-        async with inverter:
-            if args.stream:
-                with suppress(KeyboardInterrupt, asyncio.CancelledError):
-                    async for state in inverter.stream(interval=args.interval):
-                        print(json.dumps(_state_to_jsonable(state)), flush=True)
-                return 0
-            state = await inverter.read()
-            print(json.dumps(_state_to_jsonable(state), indent=_JSON_INDENT))
-            return 0
-    except (InverterError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+    logger = logging.getLogger(__name__)
+    with suppress(KeyboardInterrupt, asyncio.CancelledError):
+        while True:
+            inverter = Inverter(
+                inverter_ip=args.inverter_ip,
+                local_ip=args.local_ip,
+                local_port=args.local_port,
+                timeout=args.timeout,
+            )
+            stage = "connecting"
+            try:
+                if args.probe:
+                    dev_code = await inverter.probe()
+                    print(json.dumps({"dev_code": dev_code}, indent=_JSON_INDENT))
+                    return 0
+                async with inverter:
+                    stage = "reading"
+                    if args.stream:
+                        async for state in inverter.stream(interval=args.interval):
+                            print(json.dumps(_state_to_jsonable(state)), flush=True)
+                        return 0
+                    state = await inverter.read()
+                    print(json.dumps(_state_to_jsonable(state), indent=_JSON_INDENT))
+                    return 0
+            except (InverterError, OSError, asyncio.IncompleteReadError) as exc:
+                detail = f"{stage}: {type(exc).__name__}: {str(exc) or repr(exc)}"
+                if not args.stream:
+                    print(f"error: {detail}", file=sys.stderr)
+                    return 1
+                logger.warning("%s; reconnecting in %ss", detail, _RETRY_DELAY)
+                await asyncio.sleep(_RETRY_DELAY)
+    return 0
