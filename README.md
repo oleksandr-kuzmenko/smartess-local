@@ -57,6 +57,9 @@ python -m smartess_local --inverter-ip 192.168.0.119 --local-ip 192.168.0.110 \
     --stream --interval 10
 ```
 
+Stream mode reconnects 10 seconds after connection errors. Diagnostics include
+timestamps and exception types. Ctrl+C stops polling and reconnection attempts.
+
 Flags:
 
 | Flag | Default | Description |
