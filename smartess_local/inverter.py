@@ -228,36 +228,25 @@ class Inverter:
         await self._closing.wait()
 
     async def _read_response(self, conn: _Connection) -> tuple[bytes, bytes, str]:
-        """Read one response frame, auto-detecting layout A vs B.
-
-        Returns ``(full_frame, payload, layout_name)``. Tries layout A first
-        (80 bytes for the 34-register block); on CRC failure, reads one more
-        byte and tries layout B. Surfaces ``InverterError`` if neither works.
-        """
-        frame = await asyncio.wait_for(
-            conn.reader.readexactly(_RESPONSE_LAYOUT_A_LEN), self.timeout
+        """Use the wrapper length before CRC validation to disambiguate layouts."""
+        header = await asyncio.wait_for(conn.reader.readexactly(10), self.timeout)
+        frame_length = int.from_bytes(header[4:6], "big") + 6
+        if frame_length not in (_RESPONSE_LAYOUT_A_LEN, _RESPONSE_LAYOUT_A_LEN + 1):
+            raise InverterError("Unexpected response length", header.hex())
+        # A valid B frame can have an 80-byte prefix with a valid A CRC.
+        # Trusting that prefix would shift every register and leave one byte unread.
+        tail = await asyncio.wait_for(
+            conn.reader.readexactly(frame_length - len(header)), self.timeout
         )
-        try:
-            payload, layout = parse_response_frame(
-                frame, expected_data_words=_REGISTER_BLOCK_COUNT
-            )
-            return frame, payload, layout
-        except ValueError:
-            pass
-        try:
-            extra = await asyncio.wait_for(conn.reader.readexactly(1), self.timeout)
-        except (TimeoutError, asyncio.IncompleteReadError) as exc:
-            raise InverterError(
-                "CRC mismatch (layout A); no extra byte for layout B retry",
-                frame.hex(),
-            ) from exc
-        frame = frame + extra
+        frame = header + tail
         try:
             payload, layout = parse_response_frame(
                 frame, expected_data_words=_REGISTER_BLOCK_COUNT
             )
         except ValueError as exc:
-            raise InverterError("CRC mismatch on both layouts", frame.hex()) from exc
+            raise InverterError(str(exc), frame.hex()) from exc
+        if layout == "B" and frame[10] != _REGISTER_BLOCK_COUNT * 2:
+            raise InverterError("Unexpected response byte count", frame.hex())
         return frame, payload, layout
 
     def _require_conn(self) -> _Connection:

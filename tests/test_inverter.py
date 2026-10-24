@@ -320,3 +320,34 @@ async def _serve_one_response(
     else:
         frame = fd.make_layout_b(tid=1, dev_code=dev_code, data=data)
     await fd.respond(frame)
+
+
+@pytest.mark.asyncio
+async def test_layout_b_crc_collision_does_not_shift_payload_or_next_read() -> None:
+    # This captured B frame has a prefix that also passes layout A's CRC.
+    prefix = bytes.fromhex(
+        "007c0001004bff04010344000300000000000008fd0027138800ce000008fd"
+        "00141388008b01cc01f0ffe4ff760dbe00bb000000000000000600000007"
+        "0028002f0021005a00001860ffe4000000008e"
+    )
+    async with fake_dongle(dev_code=1) as fd, Inverter(
+        inverter_ip="127.0.0.1", local_ip="127.0.0.1",
+        local_port=find_free_port(), inverter_udp_port=fd.udp_port, timeout=1,
+    ) as inv:
+        async def serve() -> None:
+            await fd.expect_read_request()
+            await fd.respond(prefix + b"\x00")
+            await fd.expect_read_request()
+            await fd.respond(fd.make_layout_b(
+                tid=2, dev_code=1, data=_canned_register_payload()
+            ))
+
+        task = asyncio.create_task(serve())
+        try:
+            state = await inv.read()
+            assert state.working_mode.name == "OFF_GRID"
+            assert state.battery_percentage == 90
+            assert (await inv.read()).grid_voltage == 230.5
+            await task
+        finally:
+            task.cancel()

@@ -96,11 +96,12 @@ low-byte-first in the frame. The canonical check value for ASCII
 
 ## Layout auto-detection
 
-`Inverter.read()` reads `10 + 2*N + 2` bytes and tries layout A; if the CRC
-fails it reads one more byte and tries layout B. If neither matches it raises
-`InverterError` carrying the hex frame. The first successful read logs one INFO
-line — `first read OK, layout=<A|B>, frame=<hex>` — so you can see which framing
-your dongle uses.
+`Inverter.read()` reads the 10-byte header, then uses the wrapper Size field
+(total frame length minus six) to read the remaining bytes: 80 total for A,
+81 for B. Only these bounded lengths are accepted. It validates the CRC and,
+for B, the byte count before decoding registers. A truncated B frame can
+coincidentally pass layout A's CRC, so CRC alone cannot determine framing.
+The first successful read logs the detected layout.
 
 **Verified:** the Aninerel 6.2kW dongle uses layout B; auto-detection of
 layout A is kept for donor-repo-style firmware.
