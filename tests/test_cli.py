@@ -171,3 +171,112 @@ def test_stream_prints_jsonlines_until_cancelled(
     for line in lines:
         parsed = json.loads(line)
         assert parsed["working_mode"] == "MAINS"
+
+@pytest.mark.parametrize("during_connect", [False, True])
+@pytest.mark.parametrize("error", [TimeoutError(), asyncio.IncompleteReadError(b"abc", 80)])
+def test_stream_reconnects_with_fresh_client(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    during_connect: bool,
+    error: Exception,
+) -> None:
+    from smartess_local import cli
+
+    clients = []
+    closed = []
+    reads = 0
+
+    class RecoveringInverter(_FakeInverter):
+        async def __aenter__(self):
+            clients.append(self)
+            if during_connect and len(clients) == 1:
+                raise error
+            return await super().__aenter__()
+
+        async def __aexit__(self, *_: object) -> None:
+            closed.append(self)
+
+        async def read(self) -> InverterState:
+            nonlocal reads
+            reads += 1
+            if not during_connect and len(clients) == 1:
+                if reads == 1:
+                    return _canned_state()
+                raise error
+            if reads <= 3:
+                return _canned_state()
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(cli, "_RETRY_DELAY", 0.001)
+    monkeypatch.setattr(cli, "Inverter", RecoveringInverter)
+    result = asyncio.run(
+        cli.main(
+            [
+                "--inverter-ip",
+                "h",
+                "--local-ip",
+                "b",
+                "--stream",
+                "--interval",
+                "0.001",
+            ]
+        )
+    )
+    assert result == 0
+    assert len(clients) == 2
+    assert clients[0] is not clients[1]
+    assert any(client is clients[-1] for client in closed)
+    if not during_connect:
+        assert closed[0] is clients[0]
+    assert type(error).__name__ in caplog.text
+    assert "reconnecting" in caplog.text
+    assert len(capsys.readouterr().out.splitlines()) >= 2
+
+
+def test_one_shot_timeout_has_nonempty_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from smartess_local import cli
+
+    class TimeoutInverter(_FakeInverter):
+        async def read(self) -> InverterState:
+            raise TimeoutError()
+
+    monkeypatch.setattr(cli, "Inverter", TimeoutInverter)
+    assert asyncio.run(cli.main(["--inverter-ip", "h", "--local-ip", "b"])) == 1
+    assert "TimeoutError" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_stream_cancellation_during_backoff_does_not_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from smartess_local import cli
+
+    failed = asyncio.Event()
+    attempts = 0
+
+    class UnreachableInverter(_FakeInverter):
+        async def __aenter__(self):
+            nonlocal attempts
+            attempts += 1
+            failed.set()
+            raise TimeoutError()
+
+    monkeypatch.setattr(cli, "Inverter", UnreachableInverter)
+    task = asyncio.create_task(
+        cli.main(
+            [
+                "--inverter-ip",
+                "h",
+                "--local-ip",
+                "b",
+                "--stream",
+            ]
+        )
+    )
+    await asyncio.wait_for(failed.wait(), 1)
+    task.cancel()
+    assert await asyncio.wait_for(task, 1) == 0
+    assert attempts == 1
